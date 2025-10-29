@@ -1,174 +1,151 @@
-# IT Support Automation Toolkit
 
-A collection of Python scripts developed for automating common IT support tasks and improving troubleshooting efficiency.
+# 🧰 IT Support Automation Toolkit
 
-**Purpose:** Practical IT automation tools for help desk and system administration tasks  
+A Python-based automation suite that streamlines IT Support daily operations — including system health checks, network diagnostics, and user account audits.  
+Designed for internal IT teams to improve consistency, reduce manual work, and produce standardized reports with one command.
 
-## 📋 Overview
+---
 
-This toolkit contains scripts I developed to automate repetitive IT support tasks, improve system monitoring, and streamline troubleshooting procedures. These tools demonstrate practical scripting skills applicable to real-world IT support scenarios.
+## 🚀 Overview
 
-## 🛠️ Tools Included
+This toolkit provides three fully automated diagnostic modules integrated through a single command-line interface (CLI):
 
-### 1. System Health Check (`system_health_check.py`)
-Automated system monitoring and health reporting tool.
+| Module | Description | Output |
+|---------|--------------|--------|
+| 🖥️ **System Health Check** | Collects system metrics (CPU, RAM, disk, OS info) | CSV report |
+| 🌐 **Network Connectivity Check** | Tests DNS, Ping, and port reachability | TXT + CSV report |
+| 👤 **User Account Report** | Audits active/disabled users, inactive accounts, and admin counts | Summary + Detail CSV |
 
-**Features:**
-- CPU usage monitoring with threshold alerts
-- Memory utilization tracking
-- Disk space analysis across all drives
-- Network connectivity verification
-- Automated recommendations based on system status
+After execution, all results are summarized into an **HTML dashboard**, ready for review or archival.
 
-**Use Cases:**
-- Proactive system monitoring
-- Quick health checks during user support calls
-- Regular system maintenance reports
+---
 
-**Usage:**
+## ⚙️ Key Features
+
+- 🧩 **Modular architecture** – Each module runs independently or through unified CLI  
+- ⚡ **One-command automation** – Run all checks with `--all`  
+- 🧹 **Smart cleanup** – Remove old logs/reports with `--clean` or `--clean-only`  
+- 📊 **Comprehensive summary** – Auto-generated HTML report consolidating all results  
+- 🕒 **Performance tracking** – Execution time and line count per module  
+- 🧾 **Structured logging** – Daily logs with INFO/WARN/ERROR levels  
+- ⚙️ **Cross-platform** – Works on macOS, Linux, and Windows (Python 3.9+)  
+- 🔄 **Configurable** – Supports external JSON or key=value config files  
+
+---
+
+## 🖥️ Example Usage
+
 ```bash
-python system_health_check.py
-```
+# Run all modules
+python3 toolkit_cli.py --all
 
-**Sample Output:**
-```
-==================================================
-SYSTEM HEALTH CHECK REPORT
-==================================================
-Hostname: IT-SUPPORT-01
-OS: Windows 10
+# Clean old logs/reports before running
+python3 toolkit_cli.py --clean --all
 
-CPU INFORMATION:
-  Physical Cores: 4
-  Total Cores: 8
-  Current Usage: 23.5%
+# Only clean and exit
+python3 toolkit_cli.py --clean-only
 
-MEMORY INFORMATION:
-  Total: 16.00 GB
-  Available: 8.45 GB
-  Used: 7.55 GB (47.2%)
+# Run only system health check
+python3 toolkit_cli.py --system
 
-RECOMMENDATIONS:
-✓ System is running normally
-==================================================
+# Network check for a custom target
+python3 toolkit_cli.py --network --target example.com
 ```
 
 ---
 
-### 2. User Account Report Generator (`user_account_report.py`)
-Generates comprehensive user account reports for IT audits and account management.
+## 📁 Output Structure
 
-**Features:**
-- User account status tracking (Active/Inactive/Disabled)
-- Department-based user distribution
-- Inactive user identification
-- Security concern detection (missing info, admin accounts)
-- CSV export for further analysis
-
-**Use Cases:**
-- Regular user account audits
-- Identifying accounts for deprovisioning
-- Department-based user statistics
-- Security compliance reporting
-
-**Usage:**
-```bash
-python user_account_report.py
+```
+IT-Support-Automation-Toolkit/
+├─ reports/
+│   ├─ system_report_*.csv
+│   ├─ network_report_*.txt
+│   ├─ user_audit_summary_*.csv
+│   ├─ user_audit_detail_*.csv
+│   └─ summary_*.html
+│
+├─ logs/
+│   └─ daily.log
+│
+├─ toolkit_cli.py
+├─ system_health_check.py
+├─ network_check.py
+├─ user_account_report.py
+└─ config.example.json
 ```
 
-**Input:** CSV file with user data (sample data auto-generated for demo)  
-**Output:** Detailed report and CSV export with timestamp
+> Each module writes time-stamped CSV/TXT files for traceability.  
+> `summary_*.html` provides a unified overview with warnings, durations, and line counts.
 
 ---
 
-### 3. Network Connectivity Checker (`network_check.py`)
-Comprehensive network troubleshooting and diagnostic tool.
+## 🧠 Internal Workflow
 
-**Features:**
-- DNS server reachability tests
-- DNS resolution verification
-- HTTP/HTTPS connectivity checks
-- Multi-target ping tests
-- Common port scanning (HTTP, HTTPS, SSH, RDP, SMB)
-- Automated diagnosis with recommendations
+### 1. `toolkit_cli.py` (Main Orchestrator)
+- Parses CLI arguments  
+- Handles cleaning, logging, and configuration  
+- Calls each sub-module (`subprocess.run`)  
+- Merges results into one HTML summary  
 
-**Use Cases:**
-- First-line network troubleshooting
-- Diagnosing connectivity issues
-- Verifying DNS configuration
-- Testing specific host reachability
+### 2. `system_health_check.py`
+- Uses **psutil** to gather system information  
+- Detects low disk space and outputs recommendations  
 
-**Usage:**
-```bash
-# General internet connectivity check
-python network_check.py
+### 3. `network_check.py`
+- Tests DNS, Ping, and port connectivity (default: 443)  
+- Generates both `.txt` and `.csv` reports  
 
-# Test specific host
-python network_check.py example.com
-```
-
-**Sample Diagnosis:**
-```
-INTERNET CONNECTIVITY CHECK
-Testing DNS Servers:
-  Google DNS (8.8.8.8): ✓ Reachable
-  Cloudflare DNS (1.1.1.1): ✓ Reachable
-
-Testing DNS Resolution:
-  google.com: ✓ Resolved to 142.250.80.46
-
-DIAGNOSIS:
-  ✓ Internet connection is working normally
-```
+### 4. `user_account_report.py`
+- Generates demo user statistics (active, disabled, inactive)  
+- Produces summary + detailed reports  
 
 ---
 
-## 💻 Technical Details
+## 🧩 Tech Stack
 
-**Language:** Python 3.x  
-**Dependencies:**
-- `psutil` - System and process utilities
-- `socket` - Network connectivity
-- `csv` - Data export/import
-- Built-in libraries: `platform`, `subprocess`, `datetime`
+| Library | Purpose |
+|----------|----------|
+| **Python 3.9+** | Core language |
+| **psutil** | System metrics |
+| **argparse / subprocess** | CLI orchestration |
+| **csv / html / json** | Reporting and configuration |
+| **datetime / logging** | Logs and timestamps |
 
-**Installation:**
+---
+
+## 🧰 Installation
+
 ```bash
+git clone https://github.com/Han1230c/IT-Support-Automation-Toolkit.git
+cd IT-Support-Automation-Toolkit
 pip install psutil
+python3 toolkit_cli.py --all
 ```
 
-## 🎯 Skills Demonstrated
-
-- **Python Scripting:** Clean, maintainable code with proper error handling
-- **System Administration:** Understanding of OS-level monitoring and management
-- **Network Troubleshooting:** DNS, connectivity, port scanning
-- **Automation:** Reducing manual workload through scripting
-- **Documentation:** Clear README, code comments, and usage instructions
-- **Problem-Solving:** Practical solutions to real IT support scenarios
-
-## 📈 Future Enhancements
-
-Planned improvements:
-- [ ] PowerShell versions for Windows environments
-- [ ] Active Directory integration for user account management
-- [ ] Email alerting for critical system issues
-- [ ] Web dashboard for centralized monitoring
-- [ ] Log file analysis and parsing tools
-
-## 🔧 Real-World Applications
-
-These scripts can be adapted for:
-- **Help Desk:** Quick system diagnostics during user support calls
-- **System Administration:** Automated daily health checks
-- **IT Audits:** Regular account and security reviews
-- **Troubleshooting:** Structured network diagnostic procedures
-- **Documentation:** Auto-generated reports for ticket documentation
-
-## 📝 Notes
-
-- All scripts include error handling for production reliability
-- Designed for cross-platform compatibility (Windows/Linux/macOS)
-- Sample data provided for testing and demonstration
-- Can be easily customized for specific organizational needs
+*(No external dependencies beyond psutil.)*
 
 ---
+
+## 🧱 Design Goals
+
+- Reduce manual diagnostic effort for IT teams  
+- Standardize health and network audit processes  
+- Generate reliable, traceable reports  
+- Serve as a reusable base for larger monitoring systems  
+
+---
+
+## 🔮 Future Enhancements
+
+- Slack / Email notifications  
+- Remote system checks via SSH or WinRM  
+- Integration with Active Directory (LDAP queries)  
+- Web dashboard with Flask or Streamlit  
+
+---
+
+## 📄 License
+
+MIT License © 2025  
+For educational and professional demonstration of IT automation.

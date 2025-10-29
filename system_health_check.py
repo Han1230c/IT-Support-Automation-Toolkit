@@ -1,129 +1,165 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
-System Health Check Script
-Author: Xiaohan Chen
-Purpose: Automated system health monitoring for IT support
+System Health Check
+- CPU / Memory / Disk summary
+- Basic network reachability
+- CSV report export to ./reports/
+- Daily rolling logs to ./logs/YYYY-MM-DD.log
 """
 
+import argparse
+import csv
+import logging
+import os
 import platform
-import psutil
-import datetime
 import socket
+import subprocess
+from datetime import datetime
+from pathlib import Path
 
-def check_system_info():
-    """Gather basic system information"""
+try:
+    import psutil
+except ImportError:
+    raise SystemExit("Missing dependency: psutil. Install with: pip install psutil")
+
+LOG_DIR = Path("logs")
+REPORT_DIR = Path("reports")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    filename=LOG_DIR.joinpath(f"{datetime.now():%Y-%m-%d}.log"),
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - system_health_check - %(message)s",
+)
+
+def check_network(host="8.8.8.8", port=53, timeout=2.0) -> bool:
+    """TCP connect to DNS server to infer internet reachability."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+def ping(host="8.8.8.8") -> bool:
+    """Best-effort ping (works on macOS/Linux/Windows)."""
+    try:
+        count_flag = "-n" if platform.system().lower().startswith("win") else "-c"
+        result = subprocess.run(
+            ["ping", count_flag, "1", host],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+def gather_metrics():
+    cpu_percent = psutil.cpu_percent(interval=1)
+    vm = psutil.virtual_memory()
+    mem_total_gb = round(vm.total / (1024**3), 2)
+    mem_used_gb = round(vm.used / (1024**3), 2)
+    mem_pct = vm.percent
+
+    disk_rows = []
+    for part in psutil.disk_partitions(all=False):
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+        except PermissionError:
+            continue
+        disk_rows.append({
+            "device": part.device,
+            "mountpoint": part.mountpoint,
+            "total_gb": round(usage.total / (1024**3), 2),
+            "used_gb": round(usage.used / (1024**3), 2),
+            "free_gb": round(usage.free / (1024**3), 2),
+            "percent": usage.percent,
+        })
+
+    net_ok_dns = check_network()
+    net_ok_ping = ping()
+
+    return {
+        "hostname": socket.gethostname(),
+        "os": f"{platform.system()} {platform.release()}",
+        "cpu_percent": cpu_percent,
+        "mem_total_gb": mem_total_gb,
+        "mem_used_gb": mem_used_gb,
+        "mem_percent": mem_pct,
+        "disk_rows": disk_rows,
+        "net_ok_dns": net_ok_dns,
+        "net_ok_ping": net_ok_ping,
+    }
+
+def recommend(metrics, cpu_threshold=85, mem_threshold=85, disk_threshold=90):
+    recs = []
+    if metrics["cpu_percent"] >= cpu_threshold:
+        recs.append(f"High CPU usage: {metrics['cpu_percent']}% (>{cpu_threshold}%)")
+    if metrics["mem_percent"] >= mem_threshold:
+        recs.append(f"High memory usage: {metrics['mem_percent']}% (>{mem_threshold}%)")
+    for d in metrics["disk_rows"]:
+        if d["percent"] >= disk_threshold:
+            recs.append(f"Low disk space on {d['mountpoint']}: {d['percent']}% used")
+    if not metrics["net_ok_dns"] or not metrics["net_ok_ping"]:
+        recs.append("Network connectivity check failed (DNS or ping).")
+    if not recs:
+        recs.append("System is running normally.")
+    return recs
+
+def export_csv(metrics, out_path: Path):
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["Section", "Metric", "Value"])
+        w.writerow(["Meta", "Hostname", metrics["hostname"]])
+        w.writerow(["Meta", "OS", metrics["os"]])
+        w.writerow(["CPU", "CPU Usage %", metrics["cpu_percent"]])
+        w.writerow(["Memory", "Total (GB)", metrics["mem_total_gb"]])
+        w.writerow(["Memory", "Used (GB)", metrics["mem_used_gb"]])
+        w.writerow(["Memory", "Used %", metrics["mem_percent"]])
+        for d in metrics["disk_rows"]:
+            w.writerow(["Disk", f"{d['mountpoint']} used %", d["percent"]])
+            w.writerow(["Disk", f"{d['mountpoint']} free (GB)", d["free_gb"]])
+        w.writerow(["Network", "DNS TCP 8.8.8.8:53", metrics["net_ok_dns"]])
+        w.writerow(["Network", "Ping 8.8.8.8", metrics["net_ok_ping"]])
+
+def main():
+    ap = argparse.ArgumentParser(description="System Health Check")
+    ap.add_argument("--cpu-threshold", type=int, default=85)
+    ap.add_argument("--mem-threshold", type=int, default=85)
+    ap.add_argument("--disk-threshold", type=int, default=90)
+    ap.add_argument("--report-name", default=None, help="Custom report filename")
+    args = ap.parse_args()
+
+    logging.info("Start system health check")
+    metrics = gather_metrics()
+    recs = recommend(metrics, args.cpu_threshold, args.mem_threshold, args.disk_threshold)
+
+    # Console pretty print
     print("=" * 50)
     print("SYSTEM HEALTH CHECK REPORT")
     print("=" * 50)
-    print(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Hostname: {socket.gethostname()}")
-    print(f"OS: {platform.system()} {platform.release()}")
-    print(f"Architecture: {platform.machine()}")
-    print()
+    print(f"Hostname: {metrics['hostname']}")
+    print(f"OS: {metrics['os']}\n")
+    print(f"CPU Usage: {metrics['cpu_percent']}%")
+    print(f"Memory Used: {metrics['mem_used_gb']}/{metrics['mem_total_gb']} GB ({metrics['mem_percent']}%)\n")
+    print("Disk:")
+    for d in metrics["disk_rows"]:
+        print(f"  {d['mountpoint']}: used {d['percent']}% | free {d['free_gb']} GB")
+    print("\nNetwork:")
+    print(f"  DNS TCP 8.8.8.8:53 -> {'OK' if metrics['net_ok_dns'] else 'FAIL'}")
+    print(f"  Ping 8.8.8.8       -> {'OK' if metrics['net_ok_ping'] else 'FAIL'}")
+    print("\nRecommendations:")
+    for r in recs:
+        print(f"  - {r}")
 
-def check_cpu():
-    """Check CPU usage"""
-    print("CPU INFORMATION:")
-    print(f"  Physical Cores: {psutil.cpu_count(logical=False)}")
-    print(f"  Total Cores: {psutil.cpu_count(logical=True)}")
-    print(f"  Current Usage: {psutil.cpu_percent(interval=1)}%")
-    
-    # Alert if CPU usage is high
-    cpu_usage = psutil.cpu_percent(interval=1)
-    if cpu_usage > 80:
-        print(f"  ⚠️ WARNING: High CPU usage detected!")
-    print()
-
-def check_memory():
-    """Check memory usage"""
-    memory = psutil.virtual_memory()
-    print("MEMORY INFORMATION:")
-    print(f"  Total: {memory.total / (1024**3):.2f} GB")
-    print(f"  Available: {memory.available / (1024**3):.2f} GB")
-    print(f"  Used: {memory.used / (1024**3):.2f} GB ({memory.percent}%)")
-    
-    # Alert if memory usage is high
-    if memory.percent > 85:
-        print(f"  ⚠️ WARNING: High memory usage detected!")
-    print()
-
-def check_disk():
-    """Check disk usage"""
-    print("DISK INFORMATION:")
-    partitions = psutil.disk_partitions()
-    for partition in partitions:
-        try:
-            usage = psutil.disk_usage(partition.mountpoint)
-            print(f"  Drive {partition.device}:")
-            print(f"    Total: {usage.total / (1024**3):.2f} GB")
-            print(f"    Used: {usage.used / (1024**3):.2f} GB ({usage.percent}%)")
-            print(f"    Free: {usage.free / (1024**3):.2f} GB")
-            
-            # Alert if disk usage is high
-            if usage.percent > 90:
-                print(f"    ⚠️ WARNING: Low disk space!")
-        except PermissionError:
-            print(f"    ⚠️ Access denied to {partition.device}")
-        print()
-
-def check_network():
-    """Check network connectivity"""
-    print("NETWORK INFORMATION:")
-    print(f"  Hostname: {socket.gethostname()}")
-    try:
-        print(f"  IP Address: {socket.gethostbyname(socket.gethostname())}")
-    except:
-        print(f"  IP Address: Unable to retrieve")
-    
-    # Check internet connectivity
-    try:
-        socket.create_connection(("8.8.8.8", 53), timeout=3)
-        print(f"  Internet: ✓ Connected")
-    except OSError:
-        print(f"  Internet: ✗ Disconnected")
-    print()
-
-def generate_summary():
-    """Generate summary and recommendations"""
-    print("=" * 50)
-    print("RECOMMENDATIONS:")
-    
-    memory = psutil.virtual_memory()
-    cpu_usage = psutil.cpu_percent(interval=1)
-    
-    issues = []
-    if cpu_usage > 80:
-        issues.append("- Investigate high CPU usage processes")
-    if memory.percent > 85:
-        issues.append("- Close unnecessary applications to free memory")
-    
-    for partition in psutil.disk_partitions():
-        try:
-            usage = psutil.disk_usage(partition.mountpoint)
-            if usage.percent > 90:
-                issues.append(f"- Clean up disk space on {partition.device}")
-        except:
-            pass
-    
-    if not issues:
-        print("✓ System is running normally")
-    else:
-        for issue in issues:
-            print(issue)
-    
-    print("=" * 50)
-
-def main():
-    """Main function to run all checks"""
-    try:
-        check_system_info()
-        check_cpu()
-        check_memory()
-        check_disk()
-        check_network()
-        generate_summary()
-    except Exception as e:
-        print(f"Error running health check: {e}")
+    # Export CSV
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    name = args.report_name or f"system_report_{ts}.csv"
+    out_path = REPORT_DIR.joinpath(name)
+    export_csv(metrics, out_path)
+    logging.info(f"Report exported -> {out_path}")
+    print(f"\n✅ Report saved: {out_path}")
 
 if __name__ == "__main__":
     main()

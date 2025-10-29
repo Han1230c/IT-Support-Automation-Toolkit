@@ -1,175 +1,131 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
-User Account Report Generator
-Author: Xiaohan Chen
-Purpose: Generate user account reports for IT support and audit purposes
+User Account Report
+- Reads a CSV with columns: userPrincipalName, status, department, isAdmin, lastLogin(YYYY-MM-DD)
+- Computes active/disabled/inactive(>90d), missing department, admin accounts
+- Exports summary + detailed CSV to ./reports/
+- Logs to ./logs/
+- If no --input provided, uses demo dataset
 """
 
+import argparse
 import csv
-import datetime
-from collections import defaultdict
+import logging
+from datetime import datetime, timedelta
+from pathlib import Path
 
-def load_user_data(csv_file):
-    """Load user data from CSV file"""
-    users = []
+LOG_DIR = Path("logs")
+REPORT_DIR = Path("reports")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    filename=LOG_DIR.joinpath(f"{datetime.now():%Y-%m-%d}.log"),
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - user_account_report - %(message)s",
+)
+
+def load_rows(path: Path | None):
+    if path is None:
+        # Demo data
+        return [
+            {"userPrincipalName":"alice.wang@contoso.com", "status":"Active", "department":"IT", "isAdmin":"False", "lastLogin":"2025-10-20"},
+            {"userPrincipalName":"bob.chen@contoso.com",   "status":"Disabled", "department":"IT", "isAdmin":"False", "lastLogin":"2025-07-01"},
+            {"userPrincipalName":"carol.li@contoso.com",   "status":"Active", "department":"", "isAdmin":"True", "lastLogin":"2025-05-10"},
+            {"userPrincipalName":"david.z@contoso.com",    "status":"Active", "department":"HR", "isAdmin":"False", "lastLogin":"2024-12-01"},
+        ]
+    rows = []
+    with path.open(newline="", encoding="utf-8") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            rows.append(row)
+    return rows
+
+def parse_date(s: str | None):
+    if not s:
+        return None
     try:
-        with open(csv_file, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                users.append(row)
-        return users
-    except FileNotFoundError:
-        print(f"Error: File {csv_file} not found")
-        return []
-    except Exception as e:
-        print(f"Error reading file: {e}")
-        return []
+        return datetime.strptime(s.strip(), "%Y-%m-%d")
+    except ValueError:
+        return None
 
-def generate_summary_report(users):
-    """Generate summary statistics"""
-    print("=" * 60)
-    print("USER ACCOUNT SUMMARY REPORT")
-    print("=" * 60)
-    print(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Total Users: {len(users)}")
-    print()
-    
-    # Count by status
-    status_count = defaultdict(int)
-    for user in users:
-        status = user.get('Status', 'Unknown')
-        status_count[status] += 1
-    
-    print("USER STATUS:")
-    for status, count in sorted(status_count.items()):
-        print(f"  {status}: {count}")
-    print()
-    
-    # Count by department
-    dept_count = defaultdict(int)
-    for user in users:
-        dept = user.get('Department', 'Unknown')
-        dept_count[dept] += 1
-    
-    print("USERS BY DEPARTMENT:")
-    for dept, count in sorted(dept_count.items(), key=lambda x: x[1], reverse=True):
-        print(f"  {dept}: {count}")
-    print()
+def analyze(rows):
+    today = datetime.now()
+    inactive_cutoff = today - timedelta(days=90)
+    stats = {
+        "total": 0, "active": 0, "disabled": 0,
+        "inactive_gt_90d": 0, "missing_dept": 0, "admin_count": 0
+    }
+    detail = []
+    for r in rows:
+        stats["total"] += 1
+        status = (r.get("status","") or "").strip().lower()
+        dept   = (r.get("department","") or "").strip()
+        admin  = (r.get("isAdmin","False") or "False").strip().lower() in ("true","1","yes")
+        last_login = parse_date(r.get("lastLogin"))
 
-def find_inactive_users(users, days_threshold=90):
-    """Find users who haven't logged in recently"""
-    print("INACTIVE USERS (No login in last 90 days):")
-    inactive_count = 0
-    
-    for user in users:
-        last_login = user.get('LastLogin', '')
-        status = user.get('Status', '')
-        
-        if status.lower() == 'inactive' or not last_login:
-            print(f"  - {user.get('Username', 'N/A')} ({user.get('Email', 'N/A')})")
-            print(f"    Department: {user.get('Department', 'N/A')}")
-            print(f"    Last Login: {last_login if last_login else 'Never'}")
-            inactive_count += 1
-    
-    if inactive_count == 0:
-        print("  ✓ No inactive users found")
-    else:
-        print(f"\n  Total Inactive: {inactive_count}")
-        print(f"  ⚠️ Recommendation: Review these accounts for potential deprovisioning")
-    print()
+        if status == "active":
+            stats["active"] += 1
+        elif status == "disabled":
+            stats["disabled"] += 1
 
-def find_security_issues(users):
-    """Identify potential security concerns"""
-    print("SECURITY CONCERNS:")
-    issues_found = False
-    
-    for user in users:
-        concerns = []
-        
-        # Check for admin accounts
-        if user.get('Role', '').lower() == 'admin':
-            concerns.append("Admin privileges")
-        
-        # Check for missing email
-        if not user.get('Email'):
-            concerns.append("Missing email address")
-        
-        # Check for disabled but not locked accounts
-        if user.get('Status', '').lower() == 'disabled':
-            concerns.append("Disabled account - review for removal")
-        
-        if concerns:
-            issues_found = True
-            print(f"  - {user.get('Username', 'N/A')}:")
-            for concern in concerns:
-                print(f"    • {concern}")
-    
-    if not issues_found:
-        print("  ✓ No major security concerns detected")
-    print()
+        if not dept:
+            stats["missing_dept"] += 1
+        if admin:
+            stats["admin_count"] += 1
+        if last_login and last_login < inactive_cutoff and status != "disabled":
+            stats["inactive_gt_90d"] += 1
 
-def export_report(users, output_file):
-    """Export detailed report to CSV"""
-    try:
-        with open(output_file, 'w', newline='', encoding='utf-8') as f:
-            if users:
-                writer = csv.DictWriter(f, fieldnames=users[0].keys())
-                writer.writeheader()
-                writer.writerows(users)
-        print(f"✓ Detailed report exported to: {output_file}")
-    except Exception as e:
-        print(f"Error exporting report: {e}")
+        detail.append({
+            "userPrincipalName": r.get("userPrincipalName",""),
+            "status": r.get("status",""),
+            "department": dept or "(missing)",
+            "isAdmin": admin,
+            "lastLogin": r.get("lastLogin",""),
+            "flag_inactive_gt_90d": bool(last_login and last_login < inactive_cutoff and status != "disabled"),
+            "flag_missing_dept": not bool(dept),
+        })
+    return stats, detail
 
-def create_sample_data():
-    """Create sample user data for demonstration"""
-    sample_file = 'sample_users.csv'
-    sample_users = [
-        {'Username': 'jsmith', 'Email': 'jsmith@company.com', 'Department': 'IT', 
-         'Role': 'User', 'Status': 'Active', 'LastLogin': '2024-10-28'},
-        {'Username': 'bjones', 'Email': 'bjones@company.com', 'Department': 'HR', 
-         'Role': 'User', 'Status': 'Active', 'LastLogin': '2024-10-27'},
-        {'Username': 'admin', 'Email': 'admin@company.com', 'Department': 'IT', 
-         'Role': 'Admin', 'Status': 'Active', 'LastLogin': '2024-10-29'},
-        {'Username': 'olduser', 'Email': 'olduser@company.com', 'Department': 'Sales', 
-         'Role': 'User', 'Status': 'Inactive', 'LastLogin': '2024-01-15'},
-        {'Username': 'testuser', 'Email': '', 'Department': 'IT', 
-         'Role': 'User', 'Status': 'Disabled', 'LastLogin': '2024-09-10'},
-    ]
-    
-    with open(sample_file, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=sample_users[0].keys())
-        writer.writeheader()
-        writer.writerows(sample_users)
-    
-    print(f"✓ Sample data created: {sample_file}\n")
-    return sample_file
+def export_summary(stats, out_path: Path):
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["Metric", "Value"])
+        for k, v in stats.items():
+            w.writerow([k, v])
+
+def export_detail(detail, out_path: Path):
+    if not detail:
+        out_path.write_text("", encoding="utf-8"); return
+    keys = list(detail[0].keys())
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=keys)
+        w.writeheader()
+        w.writerows(detail)
 
 def main():
-    """Main function"""
-    print("User Account Report Generator\n")
-    
-    # Create sample data for demonstration
-    input_file = create_sample_data()
-    
-    # Load user data
-    users = load_user_data(input_file)
-    
-    if not users:
-        print("No user data to process")
-        return
-    
-    # Generate reports
-    generate_summary_report(users)
-    find_inactive_users(users)
-    find_security_issues(users)
-    
-    # Export detailed report
-    output_file = f"user_report_{datetime.datetime.now().strftime('%Y%m%d')}.csv"
-    export_report(users, output_file)
-    
-    print("=" * 60)
-    print("Report generation complete!")
-    print("=" * 60)
+    ap = argparse.ArgumentParser(description="User Account Report")
+    ap.add_argument("--input", help="Path to CSV (optional). If omitted, demo data is used.")
+    args = ap.parse_args()
+
+    logging.info("Start user account report")
+    rows = load_rows(Path(args.input)) if args.input else load_rows(None)
+    stats, detail = analyze(rows)
+
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    summary_path = REPORT_DIR.joinpath(f"user_audit_summary_{ts}.csv")
+    detail_path  = REPORT_DIR.joinpath(f"user_audit_detail_{ts}.csv")
+    export_summary(stats, summary_path)
+    export_detail(detail, detail_path)
+
+    print("User Account Report")
+    print("-" * 35)
+    for k, v in stats.items():
+        print(f"{k:>18}: {v}")
+    print(f"\n✅ Summary -> {summary_path}\n✅ Detail  -> {detail_path}")
+    logging.info(f"Reports exported -> {summary_path}, {detail_path}")
 
 if __name__ == "__main__":
     main()
